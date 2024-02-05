@@ -42,7 +42,7 @@ impl Annotate {
         return Annotate { genesdb, tss_region, n };
     }
 
-    pub fn annotate(&self, location: Location ) ->Result<GeneAnnotation, String> {
+    pub fn annotate(&self, location: &Location ) ->Result<GeneAnnotation, String> {
         let genes_within: Vec<loctogene::GenomicFeature> = match self.genesdb.get_genes_within(&location, loctogene::Level::Gene) {
             Ok(genes_within)=>genes_within,
             Err(err)=>return Err(err)
