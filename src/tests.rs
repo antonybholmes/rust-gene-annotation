@@ -18,11 +18,14 @@ use crate::{Annotate, GeneAnnotation};
 fn test_annotation() ->Result<(), Box<dyn Error>>{
     
 
-    let loc: Location = Location::parse("chr3:187721370-187733550")?;
+    //let loc: Location = Location::parse("chr3:187721370-187733550")?;
+
+    use loctogene::DEFAULT_TSS_REGION;
+    let loc: Location = Location::parse("chr3:187745458-187745468")?;
 
     let genesdb: Loctogene = Loctogene::new("../docker-rust-edb-api/data/loctogene/grch38.db")?;
 
-    let ts = TSSRegion::new(2000, 1000);
+    let ts = DEFAULT_TSS_REGION;
 
     let annotatedb: Annotate = Annotate::new(genesdb, ts, 10);
 

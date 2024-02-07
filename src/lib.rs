@@ -1,5 +1,8 @@
 use std::{
-    cmp, collections::{BTreeMap, HashMap}, error::Error, num
+    cmp,
+    collections::{BTreeMap, BTreeSet, HashMap},
+    error::Error,
+    num,
 };
 
 use dna::Location;
@@ -48,26 +51,41 @@ impl Annotate {
     pub fn annotate(&self, location: &Location) -> Result<GeneAnnotation, Box<dyn Error>> {
         let mid: i32 = location.mid();
 
-        let search_loc: Location = Location::new(
-            &location.chr,
-            location.start + self.tss_region.offset_5p,
-            location.end - self.tss_region.offset_5p,
-        )?;
+        // extend search area to account  for promoter
+        // let search_loc: Location = Location::new(
+        //     &location.chr,
+        //     location.start - self.tss_region.offset_5p.abs(),
+        //     location.end + self.tss_region.offset_5p.abs(),
+        // )?;
 
-        let genes_within: Vec<loctogene::GenomicFeature> = self
-            .genesdb
-            .get_genes_within(&search_loc, loctogene::Level::Transcript)?;
+        println!("{}", self.tss_region);
+        println!("{}", location);
+        
+
+        let genes_within: Vec<loctogene::GenomicFeature> = self.genesdb.get_genes_within_promoter(
+            &location,
+            loctogene::Level::Transcript,
+            cmp::max(
+                self.tss_region.offset_5p.abs(),
+                self.tss_region.offset_3p.abs(),
+            ),
+        )?;
 
         // we need the unique ids to symbols
         let mut id_map: HashMap<&str, &str> = HashMap::new();
-        let mut is_promoter_map: HashMap<&str, GeneProm> = HashMap::new();
+        let mut promoter_map: HashMap<&str, GeneProm> = HashMap::new();
         //let mut dist_map: HashMap<&str, bool> = HashMap::new();
 
-        for (i, gene) in genes_within.iter().enumerate() {
-            let s: &str = &gene.gene_symbol;
+        for gene in genes_within.iter() {
+            let id: &str = &gene.gene_id;
 
-            println!("{} {}", gene.gene_id, gene.gene_symbol);
-            id_map.insert(s, &gene.gene_id);
+            println!("{} {} {} {} {}", gene.gene_id, gene.gene_symbol, gene.start, gene.end, gene.strand);
+            id_map.insert(id, &gene.gene_symbol);
+
+            let exons: Vec<loctogene::GenomicFeature> = match self.genesdb.in_exon(&location, id) {
+                Ok(exons) => exons,
+                Err(err) => return Err(err),
+            };
 
             let is_promoter = (gene.strand == "+"
                 && mid >= gene.start + self.tss_region.offset_5p
@@ -76,15 +94,28 @@ impl Annotate {
                     && mid >= gene.end + self.tss_region.offset_3p
                     && mid <= gene.end - self.tss_region.offset_5p);
 
-            let d: i32 = (gene.start - mid);
+            let d: i32 = if gene.strand == "+" {
+                gene.start - mid
+            } else {
+                gene.end - mid
+            };
 
-            // update using or so if we become true, we stay true
-            is_promoter_map
-                .entry(s)
+            println!("{} {} {}", gene.end - mid, gene.end, mid);
+
+            // update by inserting default case and then updating
+            promoter_map
+                .entry(id)
                 .and_modify(|v| {
                     v.is_promoter = v.is_promoter || is_promoter;
-                    v.d = cmp::min(v.d, d);
-                    v.abs_d = cmp::min(v.abs_d, d.abs())
+                    v.is_exon = v.is_exon || exons.len() > 0;
+
+                    let abs_d: i32 = d.abs();
+
+                    if abs_d < v.abs_d {
+                        v.d = d;
+                        v.abs_d = abs_d;
+                    }
+                    
                 })
                 .or_insert(GeneProm {
                     is_exon: false,
@@ -94,9 +125,78 @@ impl Annotate {
                 });
         }
 
-        let gene_symbols: Vec<&str> = id_map.keys().map(|k| *k).collect();
+        // sort the ids by distance
+        let mut dist_map: BTreeMap<i32, BTreeSet<&str>> = BTreeMap::new();
 
-        print!("{}", gene_symbols.join(";"));
+        for id in id_map.keys().map(|k| *k) {
+            dist_map
+                .entry(promoter_map.get(id).unwrap().abs_d)
+                .and_modify(|v| {
+                    v.insert(id);
+                })
+                .or_insert({
+                    let mut dids: BTreeSet<&str> = BTreeSet::new();
+                    dids.insert(id);
+                    dids
+                });
+        }
+
+        // now put the ids in distance order
+        let mut ids: Vec<&str> = Vec::with_capacity(id_map.len());
+
+        for d in dist_map.keys() {
+            for id in dist_map.get(d).unwrap() {
+                ids.push(*id);
+            }
+        }
+
+        let gene_symbols = ids
+            .iter()
+            .map(|id| *id_map.get(id).unwrap())
+            .collect::<Vec<&str>>()
+            .join(";");
+
+        let labels = ids
+            .iter()
+            .map(|id| {
+                let p = promoter_map.get(id).unwrap();
+                let mut labels: Vec<&str> = Vec::with_capacity(2);
+
+                if p.is_promoter {
+                    labels.push(PROMOTER);
+                }
+
+                if p.is_exon {
+                    labels.push(EXONIC);
+                } else {
+                    labels.push(INTRONIC);
+                }
+
+                labels.join(";")
+            })
+            .collect::<Vec<String>>()
+            .join(";");
+
+        println!("{}", ids.join(";"));
+        println!("{}", gene_symbols);
+        println!("{}", labels);
+
+        println!(
+            "{}",
+            ids.iter()
+                .map(|id| *id_map.get(id).unwrap())
+                .collect::<Vec<&str>>()
+                .join(";")
+        );
+        println!(
+            "{}",
+            dist_map
+                .keys()
+                .map(|k| k.to_string())
+                .collect::<Vec<String>>()
+                .join(";")
+        );
+        //print!("{}", gene_symbols.iter().collect::<Vec<&str>>().sort());
 
         let gene_ids: Vec<String> = if genes_within.len() > 0 {
             genes_within
