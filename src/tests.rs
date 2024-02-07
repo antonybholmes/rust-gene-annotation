@@ -20,14 +20,13 @@ fn test_annotation() ->Result<(), Box<dyn Error>>{
 
     //let loc: Location = Location::parse("chr3:187721370-187733550")?;
 
-    use loctogene::DEFAULT_TSS_REGION;
-    let loc: Location = Location::parse("chr3:187745458-187745468")?;
+
+    let loc: Location = Location::parse("chr3:187745448-187745468")?;
 
     let genesdb: Loctogene = Loctogene::new("../docker-rust-edb-api/data/loctogene/grch38.db")?;
 
-    let ts = DEFAULT_TSS_REGION;
 
-    let annotatedb: Annotate = Annotate::new(genesdb, ts, 10);
+    let annotatedb: Annotate = Annotate::new(genesdb, TSSRegion::default(), 10);
 
     let annotation: GeneAnnotation = annotatedb.annotate(&loc)?;
 
