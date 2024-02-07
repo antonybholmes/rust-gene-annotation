@@ -82,16 +82,13 @@ impl Annotate {
             println!("{} {} {} {} {}", gene.gene_id, gene.gene_symbol, gene.start, gene.end, gene.strand);
             id_map.insert(id, &gene.gene_symbol);
 
-            let exons: Vec<loctogene::GenomicFeature> = match self.genesdb.in_exon(&location, id) {
-                Ok(exons) => exons,
-                Err(err) => return Err(err),
-            };
+            let exons: Vec<loctogene::GenomicFeature> = self.genesdb.in_exon(&location, id)?;
 
-            let is_promoter = (gene.strand == "+"
+            let is_promoter: bool = (gene.strand == "+"
                 && mid >= gene.start + self.tss_region.offset_5p
-                && mid <= gene.start - self.tss_region.offset_3p)
+                && mid <= gene.start + self.tss_region.offset_3p)
                 || (gene.strand == "-"
-                    && mid >= gene.end + self.tss_region.offset_3p
+                    && mid >= gene.end - self.tss_region.offset_3p
                     && mid <= gene.end - self.tss_region.offset_5p);
 
             let d: i32 = if gene.strand == "+" {
