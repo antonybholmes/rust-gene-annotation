@@ -2,7 +2,6 @@ use std::{
     cmp,
     collections::{BTreeMap, BTreeSet, HashMap},
     error::Error,
-    num,
 };
 
 use dna::Location;
@@ -19,11 +18,20 @@ const INTRONIC: &str = "intronic";
 //const ERROR_FEATURES:Features= Features{location: dna::EMPTY_STRING, level: dna::EMPTY_STRING, features: [].to_vec()};
 
 #[derive(Serialize)]
+pub struct ClosestGene {
+    pub gene_id: String,
+    pub gene_symbol: String,
+    pub prom_label: String,
+    pub tss_dist: i32,
+}
+
+#[derive(Serialize)]
 pub struct GeneAnnotation {
-    pub gene_ids: Vec<String>,
-    pub gene_symbols: Vec<String>,
-    pub relative_to_gene: Vec<String>,
-    pub tss_distance: Vec<i32>,
+    pub gene_ids: String,
+    pub gene_symbols: String,
+    pub prom_labels: String,
+    pub tss_dists: String,
+    pub closest_genes: Vec<ClosestGene>,
 }
 
 struct GeneProm {
@@ -60,7 +68,6 @@ impl Annotate {
 
         println!("{}", self.tss_region);
         println!("{}", location);
-        
 
         let genes_within: Vec<loctogene::GenomicFeature> = self.genesdb.get_genes_within_promoter(
             &location,
@@ -79,7 +86,11 @@ impl Annotate {
         for gene in genes_within.iter() {
             let id: &str = &gene.gene_id;
 
-            println!("{} {} {} {} {}", gene.gene_id, gene.gene_symbol, gene.start, gene.end, gene.strand);
+            println!(
+                "{} {} {} {} {}",
+                gene.gene_id, gene.gene_symbol, gene.start, gene.end, gene.strand
+            );
+
             id_map.insert(id, &gene.gene_symbol);
 
             let exons: Vec<loctogene::GenomicFeature> = self.genesdb.in_exon(&location, id)?;
@@ -112,7 +123,6 @@ impl Annotate {
                         v.d = d;
                         v.abs_d = abs_d;
                     }
-                    
                 })
                 .or_insert(GeneProm {
                     is_exon: false,
@@ -147,15 +157,15 @@ impl Annotate {
             }
         }
 
-        let gene_symbols = ids
+        let gene_symbols: String = ids
             .iter()
-            .map(|id| *id_map.get(id).unwrap())
+            .map(|id: &&str| *id_map.get(id).unwrap())
             .collect::<Vec<&str>>()
-            .join(";");
+            .join(",");
 
         let labels = ids
             .iter()
-            .map(|id| {
+            .map(|id: &&str| {
                 let p = promoter_map.get(id).unwrap();
                 let mut labels: Vec<&str> = Vec::with_capacity(2);
 
@@ -169,8 +179,35 @@ impl Annotate {
                     labels.push(INTRONIC);
                 }
 
-                labels.join(";")
+                labels.join(",")
             })
+            .collect::<Vec<String>>()
+            .join(";");
+
+        let prom_labels: String = ids
+            .iter()
+            .map(|id: &&str| {
+                let p = promoter_map.get(id).unwrap();
+                let mut labels: Vec<&str> = Vec::with_capacity(2);
+
+                if p.is_promoter {
+                    labels.push(PROMOTER);
+                }
+
+                if p.is_exon {
+                    labels.push(EXONIC);
+                } else {
+                    labels.push(INTRONIC);
+                }
+
+                labels.join(",")
+            })
+            .collect::<Vec<String>>()
+            .join(";");
+
+        let tss_dists: String = ids
+            .iter()
+            .map(|id: &&str| promoter_map.get(id).unwrap().d.to_string())
             .collect::<Vec<String>>()
             .join(";");
 
@@ -195,71 +232,27 @@ impl Annotate {
         );
         //print!("{}", gene_symbols.iter().collect::<Vec<&str>>().sort());
 
-        let gene_ids: Vec<String> = if genes_within.len() > 0 {
-            genes_within
-                .iter()
-                .map(|g| g.gene_id.clone())
-                .collect::<Vec<String>>()
-        } else {
-            vec![]
-        };
-
-        let gene_symbols: Vec<String> = if genes_within.len() > 0 {
-            genes_within
-                .iter()
-                .map(|g| g.gene_symbol.clone())
-                .collect::<Vec<String>>()
-        } else {
-            vec![]
-        };
-
-        // need to know if location is in an exon
-        let exons: Vec<loctogene::GenomicFeature> =
-            self.genesdb
-                .get_closest_genes(&location, self.n, loctogene::Level::Exon)?;
-
-        let mut relative_to_gene: Vec<String> = Vec::with_capacity(genes_within.len());
-
-        for gene_id in genes_within.iter().map(|g| g.gene_id.clone()) {
-            let mut labels: Vec<String> = Vec::with_capacity(2);
-
-            let promoters: Vec<loctogene::GenomicFeature> =
-                self.genesdb
-                    .in_promoter(&location, &gene_id, &self.tss_region)?;
-
-            if promoters.len() > 0 {
-                labels.push(PROMOTER.to_owned())
-            }
-
-            // see if this gene id is in an exon
-            let exons: Vec<loctogene::GenomicFeature> =
-                match self.genesdb.in_exon(&location, &gene_id) {
-                    Ok(exons) => exons,
-                    Err(err) => return Err(err),
-                };
-
-            if exons.len() > 0 {
-                labels.push(EXONIC.to_owned())
-            } else {
-                labels.push(INTRONIC.to_owned())
-            }
-
-            let label: String = labels.join(",");
-
-            relative_to_gene.push(label);
-        }
-
-        let tss_distance: Vec<i32> = Vec::with_capacity(genes_within.len());
-
         let closest_genes: Vec<loctogene::GenomicFeature> =
             self.genesdb
                 .get_closest_genes(&location, self.n, loctogene::Level::Gene)?;
 
-        Ok(GeneAnnotation {
-            gene_ids,
+        let annotation: GeneAnnotation = GeneAnnotation {
+            gene_ids: ids.join(";"),
             gene_symbols,
-            relative_to_gene,
-            tss_distance,
-        })
+            prom_labels,
+            tss_dists,
+            closest_genes: closest_genes
+                .iter()
+                .map(|cg| {
+                    ClosestGene {
+                    gene_id: cg.gene_id.to_owned(),
+                    gene_symbol: cg.gene_symbol.to_owned(),
+                    tss_dist: cg.dist,
+                    prom_label: "".to_owned(),
+                }})
+                .collect(),
+        };
+
+        Ok(annotation)
     }
 }
