@@ -58,6 +58,10 @@ impl Annotate {
         };
     }
 
+
+
+   
+
     pub fn annotate(&self, location: &Location) -> Result<GeneAnnotation, Box<dyn Error>> {
         let mid: i32 = location.mid();
 
@@ -81,6 +85,8 @@ impl Annotate {
         let mut id_map: HashMap<&str, &str> = HashMap::new();
         let mut promoter_map: HashMap<&str, GeneProm> = HashMap::new();
         //let mut dist_map: HashMap<&str, bool> = HashMap::new();
+
+        println!("within {}", genes_within.len());
 
         for gene in genes_within.iter() {
             let id: &str = &gene.gene_id;
@@ -164,6 +170,9 @@ impl Annotate {
             }
         }
 
+        println!("within d {}", ids.len());
+
+
         // make a list of the symbols in distance order
         let gene_symbols: String = ids
             .iter()
@@ -186,7 +195,7 @@ impl Annotate {
             .collect::<Vec<String>>()
             .join(";");
 
-        println!("{}", ids.join(";"));
+        println!("{} geneids", ids.join(";"));
         println!("{}", gene_symbols);
         println!("{}", prom_labels);
         println!("{}", tss_dists);
