@@ -58,10 +58,6 @@ impl Annotate {
         };
     }
 
-
-
-   
-
     pub fn annotate(&self, location: &Location) -> Result<GeneAnnotation, Box<dyn Error>> {
         let mid: i32 = location.mid();
 
@@ -72,9 +68,6 @@ impl Annotate {
         //     location.end + self.tss_region.offset_5p.abs(),
         // )?;
 
-        println!("{}", self.tss_region);
-        println!("{}", location);
-
         let genes_within: Vec<loctogene::GenomicFeature> = self.genesdb.get_genes_within_promoter(
             &location,
             loctogene::Level::Transcript,
@@ -82,25 +75,23 @@ impl Annotate {
         )?;
 
         // we need the unique ids to symbols
-        let mut id_map: HashMap<&str, &str> = HashMap::new();
-        let mut promoter_map: HashMap<&str, GeneProm> = HashMap::new();
+        let mut id_map: HashMap<String, String> = HashMap::new();
+        let mut promoter_map: HashMap<String, GeneProm> = HashMap::new();
         //let mut dist_map: HashMap<&str, bool> = HashMap::new();
 
-        println!("within {}", genes_within.len());
-
         for gene in genes_within.iter() {
-            let id: &str = &gene.gene_id;
+            let id = gene.gene_id.to_owned();
 
             // println!(
             //     "{} {} {} {} {}",
             //     gene.gene_id, gene.gene_symbol, gene.start, gene.end, gene.strand
             // );
 
-            id_map.insert(id, &gene.gene_symbol);
+            id_map.insert(id.to_owned(), gene.gene_symbol.to_owned());
 
             //let labels = self.classify_location(location, gene);
 
-            let exons: Vec<loctogene::GenomicFeature> = self.genesdb.in_exon(&location, id)?;
+            let exons: Vec<loctogene::GenomicFeature> = self.genesdb.in_exon(&location, &id)?;
 
             let is_exon: bool = exons.len() > 0;
 
@@ -124,7 +115,7 @@ impl Annotate {
             // update by inserting default case and then updating
             promoter_map
                 .entry(id)
-                .and_modify(|v| {
+                .and_modify(|v: &mut GeneProm| {
                     v.is_intronic = v.is_intronic || is_intronic;
                     v.is_promoter = v.is_promoter || is_promoter;
                     v.is_exon = v.is_exon || exons.len() > 0;
@@ -146,59 +137,61 @@ impl Annotate {
         }
 
         // sort the ids by distance
-        let mut dist_map: BTreeMap<i32, BTreeSet<&str>> = BTreeMap::new();
+        let mut dist_map: BTreeMap<i32, BTreeSet<String>> = BTreeMap::new();
 
-        for id in id_map.keys().map(|k| *k) {
+        for id in id_map.keys() {
             dist_map
                 .entry(promoter_map.get(id).unwrap().abs_d)
                 .and_modify(|v| {
-                    v.insert(id);
+                    v.insert(id.to_owned());
                 })
                 .or_insert({
-                    let mut dids: BTreeSet<&str> = BTreeSet::new();
-                    dids.insert(id);
+                    let mut dids: BTreeSet<String> = BTreeSet::new();
+                    dids.insert(id.to_owned());
                     dids
                 });
         }
 
         // now put the ids in distance order
-        let mut ids: Vec<&str> = Vec::with_capacity(id_map.len());
+        let mut ids: Vec<String> = Vec::with_capacity(id_map.len());
 
         for d in dist_map.keys() {
             for id in dist_map.get(d).unwrap() {
-                ids.push(*id);
+                ids.push(id.to_string());
             }
         }
 
         println!("within d {}", ids.len());
 
-
         // make a list of the symbols in distance order
-        let gene_symbols: String = ids
+        let mut gene_symbols: Vec<String> = ids
             .iter()
-            .map(|id: &&str| *id_map.get(id).unwrap())
-            .collect::<Vec<&str>>()
-            .join(",");
+            .map(|id: &String| id_map.get(id).unwrap().to_owned())
+            .collect::<Vec<String>>();
 
-        let prom_labels = ids
+        let prom_labels: Vec<String> = ids
             .iter()
-            .map(|id: &&str| {
+            .map(|id| {
                 let p = promoter_map.get(id).unwrap();
                 make_label(p.is_promoter, p.is_exon, p.is_intronic)
             })
-            .collect::<Vec<String>>()
-            .join(";");
+            .collect::<Vec<String>>();
 
-        let tss_dists: String = ids
+        let mut tss_dists: Vec<String> = ids
             .iter()
-            .map(|id: &&str| promoter_map.get(id).unwrap().d.to_string())
-            .collect::<Vec<String>>()
-            .join(";");
+            .map(|id| promoter_map.get(id).unwrap().d.to_string())
+            .collect::<Vec<String>>();
+
+        if ids.len() == 0 {
+            ids.push(NA.to_owned());
+            gene_symbols.push(NA.to_owned());
+            tss_dists.push(NA.to_owned());
+        }
 
         println!("{} geneids", ids.join(";"));
-        println!("{}", gene_symbols);
-        println!("{}", prom_labels);
-        println!("{}", tss_dists);
+        println!("{}", gene_symbols.join(";"));
+        println!("{}", prom_labels.join(";"));
+        println!("{}", tss_dists.join(";"));
 
         let closest_genes: Vec<loctogene::GenomicFeature> =
             self.genesdb
@@ -206,9 +199,9 @@ impl Annotate {
 
         let annotation: GeneAnnotation = GeneAnnotation {
             gene_ids: ids.join(";"),
-            gene_symbols,
-            prom_labels,
-            tss_dists,
+            gene_symbols: gene_symbols.join(";"),
+            prom_labels: prom_labels.join(";"),
+            tss_dists: tss_dists.join(";"),
             closest_genes: closest_genes
                 .iter()
                 .map(|cg| ClosestGene {
@@ -224,15 +217,15 @@ impl Annotate {
     }
 
     fn classify_location(&self, location: &Location, feature: &GenomicFeature) -> String {
-        let mid = location.mid();
+        let mid: i32 = location.mid();
 
-        let s = if feature.strand == "+" {
+        let s: u32 = if feature.strand == "+" {
             feature.start - self.tss_region.offset_5p()
         } else {
             feature.start
         };
 
-        let e = if feature.strand == "-" {
+        let e: u32 = if feature.strand == "-" {
             feature.end + self.tss_region.offset_5p()
         } else {
             feature.end
