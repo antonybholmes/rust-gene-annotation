@@ -120,7 +120,7 @@ impl Annotate {
                     v.is_promoter = v.is_promoter || is_promoter;
                     v.is_exon = v.is_exon || exons.len() > 0;
 
-                    let abs_d: i32 =  d.abs();
+                    let abs_d: i32 = d.abs();
 
                     if abs_d < v.abs_d {
                         v.d = d;
