@@ -59,7 +59,7 @@ impl Annotate {
     }
 
     pub fn annotate(&self, location: &Location) -> Result<GeneAnnotation, Box<dyn Error>> {
-        let mid: i32 = location.mid();
+        let mid: u32 = location.mid();
 
         // extend search area to account  for promoter
         // let search_loc: Location = Location::new(
@@ -105,9 +105,9 @@ impl Annotate {
             let is_intronic = mid >= gene.start && mid <= gene.end;
 
             let d: i32 = if gene.strand == "+" {
-                gene.start - mid
+                (gene.start as i32) - (mid as i32)
             } else {
-                gene.end - mid
+                (gene.end as i32) - (mid as i32)
             };
 
             //println!("{} {} {}", gene.end - mid, gene.end, mid);
@@ -120,7 +120,7 @@ impl Annotate {
                     v.is_promoter = v.is_promoter || is_promoter;
                     v.is_exon = v.is_exon || exons.len() > 0;
 
-                    let abs_d: i32 = d.abs();
+                    let abs_d: i32 =  d.abs();
 
                     if abs_d < v.abs_d {
                         v.d = d;
@@ -217,7 +217,7 @@ impl Annotate {
     }
 
     fn classify_location(&self, location: &Location, feature: &GenomicFeature) -> String {
-        let mid: i32 = location.mid();
+        let mid: u32 = location.mid();
 
         let s: u32 = if feature.strand == "+" {
             feature.start - self.tss_region.offset_5p()
