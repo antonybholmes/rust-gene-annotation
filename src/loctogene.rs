@@ -1,4 +1,8 @@
-use std::{error::Error, fmt::{self, Display}, string::FromUtf8Error};
+use std::{
+    error::Error,
+    fmt::{self, Display},
+    string::FromUtf8Error,
+};
 
 use csv::IntoInnerError;
 use dna::Location;
@@ -196,8 +200,6 @@ impl<W> From<IntoInnerError<W>> for GenesError {
     }
 }
 
-
-
 pub type GenesResult<T> = Result<T, GenesError>;
 pub type FeaturesResult = GenesResult<Vec<GenomicFeature>>;
 
@@ -255,23 +257,19 @@ impl LoctogeneDb {
     //     Ok(features)
     // }
 
-    pub fn get_pool(&self) -> GenesResult<PooledConnection<SqliteConnectionManager>> {
+    pub fn conn(&self) -> GenesResult<PooledConnection<SqliteConnectionManager>> {
         match self.pool.get() {
             Ok(pool) => Ok(pool),
             Err(_) => Err(GenesError::DatabaseError(format!("error getting pool"))),
         }
     }
 
-
-
-    
-
     pub fn get_genes_within(&self, location: &Location, level: &Level) -> FeaturesResult {
         let mid: u32 = location.mid();
 
-        let pool = self.get_pool()?;
+        let pool = self.conn()?;
 
-        let mut stmt = unwrap_stmt(pool.prepare_cached(WITHIN_GENE_SQL))?;
+        let mut stmt = stmt(&pool, WITHIN_GENE_SQL)?;
 
         let mapped_rows = match stmt.query_map(
             rusqlite::params![
@@ -304,9 +302,9 @@ impl LoctogeneDb {
     ) -> FeaturesResult {
         let mid: u32 = location.mid();
 
-        let pool = self.get_pool()?;
+        let pool = self.conn()?;
 
-        let mut stmt = unwrap_stmt(pool.prepare_cached(WITHIN_GENE_AND_PROMOTER_SQL))?;
+        let mut stmt = stmt(&pool, WITHIN_GENE_AND_PROMOTER_SQL)?;
 
         let mapped_rows = match stmt.query_map(
             rusqlite::params![
@@ -340,9 +338,9 @@ impl LoctogeneDb {
     pub fn in_exon(&self, location: &Location, gene_id: &str) -> FeaturesResult {
         let mid: u32 = location.mid();
 
-        let pool = self.get_pool()?;
+        let pool = self.conn()?;
 
-        let mut stmt = unwrap_stmt(pool.prepare_cached(IN_EXON_SQL))?;
+        let mut stmt = stmt(&pool, IN_EXON_SQL)?;
 
         let mapped_rows = match stmt.query_map(
             rusqlite::params![
@@ -376,9 +374,9 @@ impl LoctogeneDb {
     ) -> FeaturesResult {
         let mid: u32 = location.mid();
 
-        let pool = self.get_pool()?;
+        let pool = self.conn()?;
 
-        let mut stmt1 = unwrap_stmt(pool.prepare_cached(IN_PROMOTER_SQL))?;
+        let mut stmt1 = stmt(&pool, IN_PROMOTER_SQL)?;
 
         let mapped_rows_1 = match stmt1.query_map(
             rusqlite::params![
@@ -398,7 +396,7 @@ impl LoctogeneDb {
 
         let features_pos = mapped_rows_1.filter_map(|x| x.ok());
 
-        let mut stmt2 = unwrap_stmt(pool.prepare_cached(IN_PROMOTER_SQL))?;
+        let mut stmt2 = stmt(&pool, IN_PROMOTER_SQL)?;
 
         // negative strand so flip tss region
         let mapped_rows_2 = match stmt2.query_map(
@@ -435,9 +433,9 @@ impl LoctogeneDb {
     ) -> FeaturesResult {
         let mid: u32 = location.mid();
 
-        let pool = self.get_pool()?;
+        let pool = self.conn()?;
 
-        let mut stmt = unwrap_stmt(pool.prepare_cached(CLOSEST_GENE_SQL))?;
+        let mut stmt = stmt(&pool, CLOSEST_GENE_SQL)?;
 
         // query_map converts rusqlite into a standard iterator
         let mapped_rows = match stmt.query_map(
@@ -462,26 +460,33 @@ impl LoctogeneDb {
     // Returns element
 }
 
-// fn get_row<I: RowIndex, T: FromSql>(row: &rusqlite::Row<'_>, idx: I) -> GenesResult<T> {
-//     match row.get(idx) {
-//         Ok(v) => Ok(v),
-//         Err(_) => Err(GenesError::DatabaseError(format!("error getting idx"))),
-//     }
-// }
-
-pub fn unwrap_stmt<'a>(
-    stmt: Result<rusqlite::CachedStatement<'a>, rusqlite::Error>
+fn stmt<'a>(
+    conn: &'a r2d2::PooledConnection<SqliteConnectionManager>,
+    sql: &'a str,
 ) -> GenesResult<rusqlite::CachedStatement<'a>> {
-
-    match stmt {
+    match conn.prepare_cached(sql) {
         Ok(stmt) => Ok(stmt),
         Err(_) => {
-            Err(GenesError::DatabaseError(format!(
+            return Err(GenesError::DatabaseError(format!(
                 "error preparing statement"
             )))
         }
     }
 }
+
+// pub fn unwrap_stmt<'a>(
+//     stmt: Result<rusqlite::CachedStatement<'a>, rusqlite::Error>
+// ) -> GenesResult<rusqlite::CachedStatement<'a>> {
+
+//     match stmt {
+//         Ok(stmt) => Ok(stmt),
+//         Err(_) => {
+//             Err(GenesError::DatabaseError(format!(
+//                 "error preparing statement"
+//             )))
+//         }
+//     }
+// }
 
 fn row_to_feature(row: &rusqlite::Row<'_>) -> Result<GenomicFeature, rusqlite::Error> {
     let id: u32 = row.get(0)?;
