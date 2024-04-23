@@ -1,14 +1,12 @@
 use std::{
     cmp,
     collections::{BTreeMap, BTreeSet, HashMap},
-
 };
 
-use dna::Location;
 use crate::loctogene::{GenesResult, GenomicFeature, Level, LoctogeneDb, TSSRegion};
+use csv::{Writer, WriterBuilder};
+use dna::Location;
 use serde::Serialize;
-
-
 
 pub const NA: &str = "n/a";
 pub const PROMOTER: &str = "promoter";
@@ -44,7 +42,7 @@ struct GeneProm {
 }
 
 pub struct Annotate {
-    genesdb:  LoctogeneDb,
+    genesdb: LoctogeneDb,
     tss_region: TSSRegion,
     n: u16,
 }
@@ -58,7 +56,7 @@ impl Annotate {
         };
     }
 
-    pub fn annotate(&self, location: &Location) -> GenesResult<GeneAnnotation> {
+    pub async fn annotate(&self, location: &Location) -> GenesResult<GeneAnnotation> {
         let mid: u32 = location.mid();
 
         // extend search area to account  for promoter
@@ -68,30 +66,33 @@ impl Annotate {
         //     location.end + self.tss_region.offset_5p.abs(),
         // )?;
 
-        let genes_within: Vec<GenomicFeature> = self.genesdb.get_genes_within_promoter(
-            &location,
-            &Level::Transcript,
-            cmp::max(self.tss_region.offset_5p(), self.tss_region.offset_3p()),
-        )?;
+        let genes_within: Vec<GenomicFeature> = self
+            .genesdb
+            .get_genes_within_promoter(
+                &location,
+                &Level::Transcript,
+                cmp::max(self.tss_region.offset_5p(), self.tss_region.offset_3p()),
+            )
+            .await?;
 
         // we need the unique ids to symbols
-        let mut id_map: HashMap<String, String> = HashMap::new();
-        let mut promoter_map: HashMap<String, GeneProm> = HashMap::new();
+        let mut id_map: HashMap<&str, &str> = HashMap::new();
+        let mut promoter_map: HashMap<&str, GeneProm> = HashMap::new();
         //let mut dist_map: HashMap<&str, bool> = HashMap::new();
 
         for gene in genes_within.iter() {
-            let id = gene.gene_id.to_owned();
+            let id: &str = &gene.gene_id;
 
             // println!(
             //     "{} {} {} {} {}",
             //     gene.gene_id, gene.gene_symbol, gene.start, gene.end, gene.strand
             // );
 
-            id_map.insert(id.to_owned(), gene.gene_symbol.to_owned());
+            id_map.insert(id, &gene.gene_symbol);
 
             //let labels = self.classify_location(location, gene);
 
-            let exons: Vec<GenomicFeature> = self.genesdb.in_exon(&location, &id)?;
+            let exons: Vec<GenomicFeature> = self.genesdb.in_exon(&location, &id).await?;
 
             let is_exon: bool = exons.len() > 0;
 
@@ -137,55 +138,52 @@ impl Annotate {
         }
 
         // sort the ids by distance
-        let mut dist_map: BTreeMap<i32, BTreeSet<String>> = BTreeMap::new();
+        let mut dist_map: BTreeMap<i32, BTreeSet<&str>> = BTreeMap::new();
 
         for id in id_map.keys() {
             dist_map
                 .entry(promoter_map.get(id).unwrap().abs_d)
                 .and_modify(|v| {
-                    v.insert(id.to_owned());
+                    v.insert(id);
                 })
                 .or_insert({
-                    let mut dids: BTreeSet<String> = BTreeSet::new();
-                    dids.insert(id.to_owned());
+                    let mut dids: BTreeSet<&str> = BTreeSet::new();
+                    dids.insert(id);
                     dids
                 });
         }
 
         // now put the ids in distance order
-        let mut ids: Vec<String> = Vec::with_capacity(id_map.len());
+        let mut ids: Vec<&str> = Vec::with_capacity(id_map.len());
 
         for d in dist_map.keys() {
             for id in dist_map.get(d).unwrap() {
-                ids.push(id.to_string());
+                ids.push(id);
             }
         }
 
         println!("within d {}", ids.len());
 
         // make a list of the symbols in distance order
-        let mut gene_symbols: Vec<String> = ids
-            .iter()
-            .map(|id: &String| id_map.get(id).unwrap().to_owned())
-            .collect::<Vec<String>>();
+        let mut gene_symbols: Vec<&str> = ids.iter().map(|id| id_map[id]).collect::<Vec<&str>>();
 
         let prom_labels: Vec<String> = ids
             .iter()
             .map(|id| {
-                let p = promoter_map.get(id).unwrap();
+                let p = promoter_map[id];
                 make_label(p.is_promoter, p.is_exon, p.is_intronic)
             })
             .collect::<Vec<String>>();
 
         let mut tss_dists: Vec<String> = ids
             .iter()
-            .map(|id| promoter_map.get(id).unwrap().d.to_string())
+            .map(|id| promoter_map[id].d.to_string())
             .collect::<Vec<String>>();
 
         if ids.len() == 0 {
-            ids.push(NA.to_owned());
-            gene_symbols.push(NA.to_owned());
-            tss_dists.push(NA.to_owned());
+            ids.push(NA);
+            gene_symbols.push(NA);
+            tss_dists.push(NA.to_string());
         }
 
         println!("{} geneids", ids.join(";"));
@@ -193,9 +191,16 @@ impl Annotate {
         println!("{}", prom_labels.join(";"));
         println!("{}", tss_dists.join(";"));
 
-        let closest_genes: Vec<GenomicFeature> =
-            self.genesdb
-                .get_closest_genes(&location, self.n, Level::Gene)?;
+        let closest_genes: Vec<GenomicFeature> = self
+            .genesdb
+            .get_closest_genes(&location, self.n, Level::Gene)
+            .await.map(|cg|  ClosestGene {
+                gene_id: cg.gene_id.to_owned(),
+                gene_symbol: cg.gene_symbol.to_owned(),
+                tss_dist: cg.dist,
+                prom_label: self.classify_location(location, cg).await,
+            })
+            .collect()?;
 
         let annotation: GeneAnnotation = GeneAnnotation {
             gene_ids: ids.join(";"),
@@ -204,11 +209,11 @@ impl Annotate {
             tss_dists: tss_dists.join(";"),
             closest_genes: closest_genes
                 .iter()
-                .map(|cg| ClosestGene {
+                .map(|cg|  ClosestGene {
                     gene_id: cg.gene_id.to_owned(),
                     gene_symbol: cg.gene_symbol.to_owned(),
                     tss_dist: cg.dist,
-                    prom_label: self.classify_location(location, cg),
+                    prom_label: self.classify_location(location, cg).await,
                 })
                 .collect(),
         };
@@ -216,7 +221,7 @@ impl Annotate {
         Ok(annotation)
     }
 
-    fn classify_location(&self, location: &Location, feature: &GenomicFeature) -> String {
+    async fn classify_location(&self, location: &Location, feature: &GenomicFeature) -> String {
         let mid: u32 = location.mid();
 
         let s: u32 = if feature.strand == "+" {
@@ -243,7 +248,7 @@ impl Annotate {
                 && mid <= e);
 
         let exons: Vec<GenomicFeature> =
-            match self.genesdb.in_exon(&location, &feature.gene_id) {
+            match self.genesdb.in_exon(&location, &feature.gene_id).await {
                 Ok(exons) => exons,
                 Err(_) => vec![],
             };
@@ -253,6 +258,69 @@ impl Annotate {
         let is_intronic = mid >= feature.start && mid <= feature.end;
 
         return make_label(is_promoter, is_exon, is_intronic);
+    }
+
+    pub async fn make_gene_table(
+        &self,
+        locations: &Vec<Location>,
+        closest_n: u16,
+        ts: &TSSRegion,
+    ) -> GenesResult<String> {
+        let mut wtr: Writer<Vec<u8>> = WriterBuilder::new().delimiter(b'\t').from_writer(vec![]);
+
+        let capacity: usize = 6 + closest_n as usize;
+
+        let mut headers: Vec<String> = Vec::with_capacity(capacity);
+
+        headers.push("Location".to_owned());
+        headers.push("ID".to_owned());
+        headers.push("Gene Symbol".to_owned());
+        headers.push(format!(
+            "Relative To Gene (prom=-{}/+{}kb)",
+            ts.offset_5p() / 1000,
+            ts.offset_3p() / 1000
+        ));
+        headers.push("TSS Distance".to_owned());
+
+        for i in 1..(closest_n + 1) {
+            headers.push(format!("#{} Closest ID", i));
+            headers.push(format!("#{} Closest Gene Symbols", i));
+            headers.push(format!(
+                "#{} Relative To Closet Gene (prom=-{}/+{}kb)",
+                i,
+                ts.offset_5p() / 1000,
+                ts.offset_3p() / 1000
+            ));
+            headers.push(format!("#{} TSS Closest Distance", i));
+        }
+
+        wtr.write_record(&headers)?;
+
+        for location in locations {
+            let annotation: GeneAnnotation = self.annotate(location).await?;
+
+            let mut row: Vec<String> = Vec::with_capacity(capacity);
+
+            row.push(location.to_string());
+            row.push(annotation.gene_ids);
+            row.push(annotation.gene_symbols);
+            row.push(annotation.prom_labels);
+            row.push(annotation.tss_dists);
+
+            for closest_gene in annotation.closest_genes.iter() {
+                row.push(closest_gene.gene_id.clone());
+                row.push(closest_gene.gene_symbol.clone());
+                row.push(closest_gene.prom_label.clone());
+                row.push(closest_gene.tss_dist.to_string());
+            }
+
+            wtr.write_record(&row)?;
+        }
+
+        let inner: Vec<u8> = wtr.into_inner()?;
+        let data: String = String::from_utf8(inner)?;
+
+        Ok(data)
     }
 }
 

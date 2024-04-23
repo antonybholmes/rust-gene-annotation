@@ -4,8 +4,7 @@
 use std::error::Error;
 #[cfg(test)]
 use dna::Location;
-#[cfg(test)]
-use serde_json::json;
+ 
 #[cfg(test)]
 use crate::annotate::Annotate;
 #[cfg(test)]
