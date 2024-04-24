@@ -170,7 +170,7 @@ impl Annotate {
         let prom_labels: Vec<String> = ids
             .iter()
             .map(|id| {
-                let p = promoter_map[id];
+                let p = &promoter_map[id];
                 make_label(p.is_promoter, p.is_exon, p.is_intronic)
             })
             .collect::<Vec<String>>();
@@ -191,31 +191,34 @@ impl Annotate {
         println!("{}", prom_labels.join(";"));
         println!("{}", tss_dists.join(";"));
 
-        let closest_genes: Vec<GenomicFeature> = self
+        let features: Vec<GenomicFeature> = self
             .genesdb
             .get_closest_genes(&location, self.n, Level::Gene)
-            .await.map(|cg|  ClosestGene {
-                gene_id: cg.gene_id.to_owned(),
-                gene_symbol: cg.gene_symbol.to_owned(),
-                tss_dist: cg.dist,
-                prom_label: self.classify_location(location, cg).await,
-            })
-            .collect()?;
+            .await?;
+
+        let mut closest_genes: Vec<ClosestGene> = Vec::with_capacity(features.len());
+
+        for i in 0..features.len() {
+            let feature = &features[i];
+
+            let prom_label = self.classify_location(location,  feature).await;
+
+            let closest = ClosestGene {
+                gene_id: feature.gene_id.to_owned(),
+                gene_symbol: feature.gene_symbol.to_owned(),
+                tss_dist: feature.dist,
+                prom_label,
+            };
+
+            closest_genes.push(closest);
+        }
 
         let annotation: GeneAnnotation = GeneAnnotation {
             gene_ids: ids.join(";"),
             gene_symbols: gene_symbols.join(";"),
             prom_labels: prom_labels.join(";"),
             tss_dists: tss_dists.join(";"),
-            closest_genes: closest_genes
-                .iter()
-                .map(|cg|  ClosestGene {
-                    gene_id: cg.gene_id.to_owned(),
-                    gene_symbol: cg.gene_symbol.to_owned(),
-                    tss_dist: cg.dist,
-                    prom_label: self.classify_location(location, cg).await,
-                })
-                .collect(),
+            closest_genes,
         };
 
         Ok(annotation)

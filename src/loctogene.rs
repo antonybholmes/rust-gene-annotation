@@ -79,6 +79,18 @@ impl From<&str> for Level {
     }
 }
 
+impl From<String> for Level {
+    fn from(level: String) -> Self {
+        match level.as_str() {
+            "transcript"  => Level::Transcript,
+            "exon" => Level::Exon,
+            "2" => Level::Transcript,
+            "3" => Level::Exon,
+            _ => Level::Gene,
+        }
+    }
+}
+
 impl From<u8> for Level {
     fn from(level: u8) -> Self {
         match level {
